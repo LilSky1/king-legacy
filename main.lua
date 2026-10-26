@@ -301,7 +301,17 @@ local CONFIG = {
     -- true (แบบเดิม): ไปเซิร์ฟเดียวกันเสมอ ตัวแรกในรายการ = หัวหน้า ดึงคิว แล้วเขียน "เซิร์ฟของปาร์ตี้" ลง Firebase
     --   ตัวอื่น = ตามหัวหน้า (ไม่ดึงคิวเอง) / หัวหน้าเงียบเกิน PARTY_TTL (ออฟไลน์) -> ตัวอื่นดึงคิวเองแทน
     PARTY_ALWAYS_TOGETHER = false,
-    QUEUE_MAIN_FIND_REFRESH = 60,   -- ตัวหลักเจอของ: ใส่คิวซ้ำ (ต่ออายุ + อัปเดต HP) ทุกกี่วินาทีระหว่างของยังอยู่
+    QUEUE_MAIN_FIND_REFRESH = 60,   -- ตัวหลักเจอน้ำวน: ใส่คิวซ้ำ (ต่ออายุ) ทุกกี่วินาทีระหว่างน้ำวนยังอยู่
+    QUEUE_MAIN_BOSS_REFRESH = 20,   -- ตัวหลักเจอบอส: อัปเดต HP + ความเร็วเลือดลด ในคิวทุกกี่วินาที (ถี่กว่า ตัวที่จะมาช่วยได้ตัดสินใจจากข้อมูลสด)
+
+    -- วางแผนไปตีบอส (เป้าหมาย = ได้เข้าไฟต์ให้มากที่สุด เพราะได้ตี = มีโอกาสดรอป)
+    -- HP ตอนไปถึง ≈ HP ในคิว - ความเร็วเลือดลด × (อายุข้อมูล + เวลาเดินทาง) / ไปเฉพาะตอนคาดว่ายังเหลือพอ
+    -- ความเร็วเลือดลด: ที่คนเจอวัดมา -> ไม่มีใช้ค่าที่ไอดีนี้เรียนรู้จากไฟต์ก่อน ๆ -> ยังไม่เคยใช้ BOSS_ASSUMED_DRAIN
+    BOSS_TRAVEL_SECONDS = 45,          -- เวลาวาร์ปไปเซิร์ฟอื่น (เน็ตนี้ ~40 วิ)
+    BOSS_ASSUMED_DRAIN = 0.4,          -- %HP ต่อวินาที (เดาไว้ก่อน: Serpent 10M ตายใน ~4 นาที) เรียนรู้จริงแล้วจะเลิกใช้
+    BOSS_MIN_ARRIVE_HP = 5,            -- ว่างอยู่: ไปถ้าคาดว่าถึงแล้วยังเหลือ % นี้ (ไม่มีอะไรทำ ลองไปไม่เสียอะไร)
+    BOSS_MIN_ARRIVE_HP_FROM_WHIRLPOOL = 25, -- ยืนตกน้ำวนอยู่: ต้องเหลือเยอะกว่า ถึงคุ้มทิ้งน้ำวนที่จะเรียก Serpent ตัวใหม่ได้
+    BOSS_SKIP_FULL_SERVER = true,      -- คิวบอกว่าเซิร์ฟเต็ม -> ข้าม (วาร์ปไปก็เข้าไม่ได้)
     QUEUE_MAIN_WHIRLPOOL_TTL = 600, -- น้ำวนที่ตัวหลักเจอ อยู่ในคิวได้นานกว่า (ทิ้งไว้ไปช่วยตีที่อื่น ตีจบแล้วจะได้กลับมา)
     QUEUE_CLAIM_SECONDS = 120, -- เซิร์ฟที่ตัวหลักอีกตัวจองไว้ ข้ามกี่วินาที (ใช้ตอนหัวหน้าออฟไลน์แล้วตัวอื่นดึงคิวเอง)
     PARTY_TTL = 300,           -- เซิร์ฟของปาร์ตี้ใช้ได้กี่วินาทีนับจากหัวหน้าเขียนล่าสุด
@@ -2860,6 +2870,109 @@ local function queueEntryLabel(entry)
     return label
 end
 
+-- วางแผนไปตีบอส: ไปเฉพาะตอนน่าจะทันได้ตี (ดู BOSS_* ใน CONFIG)
+--   ความเร็วเลือดลด (%HP/วิ): คนเจอวัดเองแล้วใส่ในคิว (hpRate) / ไอดีนี้จดจากไฟต์ที่ตีจบ ลงไฟล์ (เรียนรู้)
+-- (เก็บในตารางเดียว: main chunk ใกล้เพดาน local 200 ตัวของ Luau แล้ว)
+local bossPlan = {
+    file = "kl_boss_drain_" .. tostring(LocalPlayer.UserId) .. ".json",
+    learned = nil, fights = 0, -- ความเร็วเลือดลดเฉลี่ยจากไฟต์ก่อน ๆ / นับกี่ไฟต์
+    fight = nil,               -- ไฟต์ที่กำลังตีในเซิร์ฟนี้ { name, firstHp, firstAt, lastHp, lastAt }
+    skipLogged = {},           -- JobId ที่ log ไปแล้วว่าข้าม (ไม่ log ซ้ำทุก 5 วิ)
+}
+pcall(function()
+    if isfile and readfile and isfile(bossPlan.file) then
+        local saved = HttpService:JSONDecode(readfile(bossPlan.file))
+        if type(saved) == "table" and tonumber(saved.drain) and tonumber(saved.drain) > 0 then
+            bossPlan.learned = tonumber(saved.drain)
+            bossPlan.fights = tonumber(saved.fights) or 1
+        end
+    end
+end)
+
+-- %HP ของโมเดลบอส (ทศนิยม ไม่ปัด: วัดความเร็วช่วงสั้น ๆ ต้องละเอียด) / ไม่มี Humanoid -> nil
+function bossPlan.hpOf(model)
+    local hum = model and model:FindFirstChildOfClass("Humanoid")
+    if hum and hum.MaxHealth > 0 then
+        return hum.Health / hum.MaxHealth * 100
+    end
+    return nil
+end
+
+-- ความเร็วเลือดลดที่ใช้คาดการณ์ + ที่มา
+function bossPlan.drain(entry)
+    local measured = entry and tonumber(entry.hpRate)
+    if measured and measured > 0 then return measured, "วัดสด" end
+    if bossPlan.learned then return bossPlan.learned, string.format("เรียนรู้ %d ไฟต์", bossPlan.fights) end
+    return tonumber(CONFIG.BOSS_ASSUMED_DRAIN) or 0.4, "ค่าเดา"
+end
+
+-- คาดว่าไปถึงแล้วบอสเหลือกี่ % (ไม่ใช่บอส / ไม่รู้ HP -> nil)
+function bossPlan.arriveHp(entry)
+    local hp = tonumber(entry.hp)
+    if entry.type ~= "Boss" or not hp then return nil end
+    local drain = bossPlan.drain(entry)
+    return hp - drain * ((tonumber(entry.age) or 0) + (tonumber(CONFIG.BOSS_TRAVEL_SECONDS) or 45))
+end
+
+-- ควรไปเซิร์ฟนี้ไหม -> ok, เหตุผล (fromWhirlpool = กำลังยืนตกน้ำวนอยู่ ต้องคุ้มกว่า)
+function bossPlan.worth(entry, fromWhirlpool)
+    local players, maxPlayers = tonumber(entry.players), tonumber(entry.maxPlayers)
+    if CONFIG.BOSS_SKIP_FULL_SERVER and players and maxPlayers and maxPlayers > 0 and players >= maxPlayers then
+        return false, string.format("เซิร์ฟเต็ม %d/%d", players, maxPlayers)
+    end
+    if entry.type ~= "Boss" then return true, nil end
+    local arrive = bossPlan.arriveHp(entry)
+    if not arrive then return true, "ไม่รู้ HP ลองไป" end
+    local _, source = bossPlan.drain(entry)
+    local need = fromWhirlpool and (tonumber(CONFIG.BOSS_MIN_ARRIVE_HP_FROM_WHIRLPOOL) or 25)
+        or (tonumber(CONFIG.BOSS_MIN_ARRIVE_HP) or 5)
+    local detail = string.format("คาดว่าไปถึงเหลือ ~%d%% (%s, ต้อง ≥%d%%%s)", math.floor(math.max(arrive, 0) + 0.5),
+        source, need, fromWhirlpool and " เพราะต้องทิ้งน้ำวน" or "")
+    return arrive >= need, detail
+end
+
+-- ระหว่างไฟต์ในเซิร์ฟนี้: จด HP แรกที่เห็น / ล่าสุด (เรียกทุกรอบที่เห็นบอส)
+function bossPlan.observe(bossName, model)
+    local hp = bossPlan.hpOf(model)
+    if not hp then return end
+    local fight = bossPlan.fight
+    if not fight or fight.name ~= bossName then
+        bossPlan.fight = { name = bossName, firstHp = hp, firstAt = os.clock(), lastHp = hp, lastAt = os.clock() }
+    else
+        fight.lastHp, fight.lastAt = hp, os.clock()
+    end
+end
+
+-- ความเร็วเลือดลดของไฟต์นี้ (ดูมาแล้ว ≥10 วิ และเลือดลดจริง) / ยังไม่พอ -> nil
+function bossPlan.currentRate()
+    local fight = bossPlan.fight
+    if not fight then return nil end
+    local seconds = fight.lastAt - fight.firstAt
+    local dropped = fight.firstHp - fight.lastHp
+    if seconds < 10 or dropped <= 0 then return nil end
+    return dropped / seconds
+end
+
+-- บอสหายแล้ว: เอาความเร็วไฟต์นี้ไปเฉลี่ยกับที่เรียนรู้ไว้ (ต้องดูนาน ≥20 วิ และเลือดลด ≥10% ถึงนับ)
+function bossPlan.finish()
+    local fight = bossPlan.fight
+    bossPlan.fight = nil
+    if not fight then return end
+    local seconds = fight.lastAt - fight.firstAt
+    local dropped = fight.firstHp - fight.lastHp
+    if seconds < 20 or dropped < 10 then return end
+    local rate = dropped / seconds
+    bossPlan.learned = bossPlan.learned and (bossPlan.learned * 0.7 + rate * 0.3) or rate
+    bossPlan.fights = bossPlan.fights + 1
+    pcall(function()
+        if writefile then
+            writefile(bossPlan.file, HttpService:JSONEncode({ drain = bossPlan.learned, fights = bossPlan.fights }))
+        end
+    end)
+    print(string.format("[KL-Fisher] 📈 ไฟต์ %s: เลือดลด %.2f%%/วิ (%d%% ใน %d วิ) -> ค่าเฉลี่ยที่เรียนรู้ %.2f%%/วิ จาก %d ไฟต์",
+        bossDisplayName(fight.name), rate, math.floor(dropped + 0.5), math.floor(seconds), bossPlan.learned, bossPlan.fights))
+end
+
 -- อ่านคิวทั้งหมด -> รายการที่ยังใช้ได้ เรียง Serpent > มังกร > น้ำวน / ใหม่ก่อนเก่า (ของหมดอายุลบทิ้งเบื้องหลัง)
 local function fetchQueue()
     if not FIREBASE_BASE then return {} end
@@ -2896,16 +3009,26 @@ local function fetchQueue()
         end
     end
     -- ลำดับ: Serpent (1) -> มังกร / บอสอื่นในรายการ (2) -> น้ำวน (3)
-    -- อันดับเท่ากัน: ของที่ตัวหลักเจอก่อน (เรียงตามใครเจอก่อน ตัวหลักทุกตัวได้ลำดับเดียวกัน -> ไปที่เดียวกัน)
+    -- บอสอันดับเท่ากัน: คาดว่าไปถึงแล้วเหลือ HP มากกว่าก่อน (ได้ตีนานกว่า = โอกาสได้ดรอปมากกว่า)
+    -- อันดับเท่ากันที่เหลือ: ของที่ตัวหลักเจอก่อน (เรียงตามใครเจอก่อน ตัวหลักทุกตัวได้ลำดับเดียวกัน -> ไปที่เดียวกัน)
     --               แล้วของตัวรอง (ใหม่ก่อนเก่า)
     local function queueEntryRank(entry)
         if entry.type ~= "Boss" then return 3 end
         return string.find(string.lower(tostring(entry.name)), "serpent", 1, true) and 1 or 2
     end
+    for _, entry in ipairs(list) do
+        entry.expectHp = bossPlan.arriveHp(entry)
+    end
     table.sort(list, function(a, b)
         local rankA = queueEntryRank(a)
         local rankB = queueEntryRank(b)
         if rankA ~= rankB then return rankA < rankB end
+        if a.type == "Boss" then
+            -- ไม่รู้ HP = กลาง ๆ (50) / เทียบเป็นช่วงละ 10% (กันตัวหลัก 2 ตัวอ่านคิวห่างกันไม่กี่วิแล้วเลือกคนละที่
+            -- และ table.sort ต้องการตัวเทียบที่สม่ำเสมอ เทียบแบบ "ต่างกันเกิน x" แล้ว error invalid order function ได้)
+            local bandA, bandB = math.floor((a.expectHp or 50) / 10), math.floor((b.expectHp or 50) / 10)
+            if bandA ~= bandB then return bandA > bandB end
+        end
         if (a.byMain == true) ~= (b.byMain == true) then return a.byMain == true end
         if a.byMain then
             local firstA, firstB = tonumber(a.firstAt) or 0, tonumber(b.firstAt) or 0
@@ -2943,6 +3066,7 @@ local function teleportToQueued(entry)
         if writefile then
             writefile(QUEUE_TARGET_FILE, HttpService:JSONEncode({
                 jobId = entry.jobId, type = entry.type, name = entry.name, scout = entry.scout,
+                expectHp = entry.expectHp, -- ไปถึงแล้วเทียบกับ HP จริง (log ไว้ปรับค่า BOSS_*)
             }))
         end
     end)
@@ -3015,7 +3139,21 @@ local function runQueueStep(leaveIfEmpty, reason)
         local tries = 0
         for _, entry in ipairs(entries) do
             if tries >= maxTries or mainBusyHere() then break end
+            -- ไปไหม: ยืนตกน้ำวนอยู่ไม่ไปน้ำวนอื่น / บอสต้องคาดว่าไปทันได้ตี / เซิร์ฟเต็มข้าม (bossPlan.worth)
+            local go, why = false, nil
             if not bossOnly or entry.type == "Boss" then
+                go, why = bossPlan.worth(entry, bossOnly)
+            end
+            if not go and why then
+                local skipKey = entry.jobId .. ":" .. tostring(entry.type) .. ":" .. tostring(bossOnly)
+                if not bossPlan.skipLogged[skipKey] then
+                    bossPlan.skipLogged[skipKey] = true
+                    print(string.format("[KL-Fisher] ⏭️ ข้าม %s ที่ '%s' เจอ: %s", queueEntryLabel(entry), tostring(entry.scout), why))
+                    postCoordLog(string.format("⏭️ **%s** ข้าม %s ที่ **%s** เจอ — %s (JobId `%s`)",
+                        LocalPlayer.Name, queueEntryLabel(entry), tostring(entry.scout), why, shortJobId(entry.jobId)))
+                end
+            end
+            if go then
                 tries = tries + 1
                 -- จองเซิร์ฟนี้ก่อนไป (เบื้องหลัง ไม่รอ): ตัวหลักอีกตัวจะข้าม / ไปถึงแล้วเซิร์ฟนี้ถูกลบจากคิวเอง (fetchQueue)
                 local claimUrl = queueEntryUrl(entry.jobId)
@@ -3026,11 +3164,12 @@ local function runQueueStep(leaveIfEmpty, reason)
                 if CONFIG.PARTY_ALWAYS_TOGETHER then
                     party.publish(entry.jobId, queueEntryLabel(entry))
                 end
-                print(string.format("[KL-Fisher] 🎯 ดึงเซิร์ฟจากคิว: %s (%s '%s' เจอ ต่ออายุล่าสุด %d วิก่อน) -> วาร์ปไป JobId %s",
+                print(string.format("[KL-Fisher] 🎯 ดึงเซิร์ฟจากคิว: %s (%s '%s' เจอ ต่ออายุล่าสุด %d วิก่อน%s) -> วาร์ปไป JobId %s",
                     queueEntryLabel(entry), entry.byMain and "ตัวหลัก" or "ตัวรอง", tostring(entry.scout),
-                    math.floor(entry.age), entry.jobId))
-                postCoordLog(string.format("🎯 **%s** ดึงเซิร์ฟจากคิว: %s ที่ **%s** เจอเมื่อ %d วิก่อน → วาร์ปไป (JobId `%s`)",
-                    LocalPlayer.Name, queueEntryLabel(entry), tostring(entry.scout), math.floor(entry.age), shortJobId(entry.jobId)))
+                    math.floor(entry.age), why and (" / " .. why) or "", entry.jobId))
+                postCoordLog(string.format("🎯 **%s** ดึงเซิร์ฟจากคิว: %s ที่ **%s** เจอเมื่อ %d วิก่อน%s → วาร์ปไป (JobId `%s`)",
+                    LocalPlayer.Name, queueEntryLabel(entry), tostring(entry.scout), math.floor(entry.age),
+                    why and (" — " .. why) or "", shortJobId(entry.jobId)))
 
                 isHoppingServer = true
                 bypassHopBlock = true -- การย้ายของเราเอง ต้องไม่โดนตัวกันย้ายเซิร์ฟ (HOLD) บล็อค
@@ -3163,12 +3302,19 @@ local function runScout()
     repeat
         local bossName, bossModel = findBossInServer()
         if bossName and bossModel then
-            local hum = bossModel:FindFirstChildOfClass("Humanoid")
-            local hp = nil
-            if hum and hum.MaxHealth > 0 then
-                hp = math.floor(hum.Health / hum.MaxHealth * 100 + 0.5)
+            -- ดู HP ต่ออีก 5 วิ วัดความเร็วเลือดลด (ตัวหลักใช้คาดว่าไปทันไหม)
+            -- เลือดไม่ลด (ยังไม่มีใครตี) -> ไม่ส่ง hpRate ตัวหลักใช้ค่าที่เรียนรู้ไว้แทน
+            local firstHp, firstAt = bossPlan.hpOf(bossModel), os.clock()
+            local lastHp = firstHp
+            while os.clock() - firstAt < 5 and bossModel.Parent do
+                task.wait(0.5)
+                lastHp = bossPlan.hpOf(bossModel) or lastHp
             end
-            found = { type = "Boss", name = bossName, hp = hp }
+            local hpRate = nil
+            if firstHp and lastHp and firstHp > lastHp then
+                hpRate = math.floor((firstHp - lastHp) / (os.clock() - firstAt) * 1000 + 0.5) / 1000
+            end
+            found = { type = "Boss", name = bossName, hp = lastHp and math.floor(lastHp + 0.5), hpRate = hpRate }
             break
         end
         task.wait(0.5)
@@ -3274,20 +3420,23 @@ function mainFind.send(targetType, targetName)
     if mainFind.isOtherMain(mainFind.arrivedFrom) then return end
     local url = queueEntryUrl(game.JobId)
     if not url then return end
-    if os.clock() - (mainFind.lastAt[targetType] or -math.huge) < (tonumber(CONFIG.QUEUE_MAIN_FIND_REFRESH) or 60) then return end
+    local refresh = targetType == "Boss" and (tonumber(CONFIG.QUEUE_MAIN_BOSS_REFRESH) or 20)
+        or (tonumber(CONFIG.QUEUE_MAIN_FIND_REFRESH) or 60)
+    if os.clock() - (mainFind.lastAt[targetType] or -math.huge) < refresh then return end
     mainFind.lastAt[targetType] = os.clock()
 
-    local hp = nil
+    -- บอส: HP ตอนนี้ + ความเร็วเลือดลดที่วัดเองในไฟต์นี้ (ตัวที่จะมาช่วยใช้คาดว่าไปทันไหม)
+    local hp, hpRate = nil, nil
     if targetType == "Boss" then
         local _, bossModel = findBossInServer()
-        local hum = bossModel and bossModel:FindFirstChildOfClass("Humanoid")
-        if hum and hum.MaxHealth > 0 then
-            hp = math.floor(hum.Health / hum.MaxHealth * 100 + 0.5)
-        end
+        local rawHp = bossPlan.hpOf(bossModel)
+        hp = rawHp and math.floor(rawHp + 0.5)
+        local rate = bossPlan.currentRate()
+        hpRate = rate and math.floor(rate * 1000 + 0.5) / 1000
     end
     mainFind.firstAt = mainFind.firstAt or serverNow()
     local entry = {
-        type = targetType, name = targetName, hp = hp,
+        type = targetType, name = targetName, hp = hp, hpRate = hpRate,
         jobId = game.JobId, placeId = game.PlaceId, scout = LocalPlayer.Name,
         byMain = true, firstAt = mainFind.firstAt,
         players = #Players:GetPlayers(), maxPlayers = Players.MaxPlayers,
@@ -3414,6 +3563,7 @@ local function executeCastFishing()
         -- บอสโผล่ระหว่างรอปลา: ตีเองถ้าเปิด AUTO_ATTACK_BOSS ไม่งั้นส่งต่อให้ Maru Hub
         local bName, bModel = findBossInServer()
         if bName and bModel then
+            bossPlan.observe(bName, bModel)
             if CONFIG.AUTO_ATTACK_BOSS then
                 print(string.format("[KL-Fisher] 🐉 บอส '%s' ปรากฏตัวขึ้นแล้ว! กำลังเข้าตี...", bName))
                 removeSafetyPlatform()
@@ -3500,6 +3650,7 @@ local function runFishingCycle()
         table.clear(remoteFailCount) -- จบไฟต์แล้ว ใส่อาวุธได้ปกติ -> เลิกพักยาว
         removeSafetyPlatform()
         mainFind.clear() -- บอสเซิร์ฟนี้จบแล้ว ห้ามให้ตัวหลักอีกตัววาร์ปมาอีก (น้ำวนยังอยู่ -> รอบหน้าใส่คิวใหม่เอง)
+        bossPlan.finish() -- เรียนรู้ความเร็วเลือดลดจากไฟต์นี้
         if shouldHopAfterBoss(finishedBoss) then
             -- บอสจบแล้ว -> ย้ายเซิร์ฟใหม่ทันที (ไม่ต้องคืนเบ็ดที่นี่ ไปเซิร์ฟใหม่ค่อยหยิบเบ็ดตอนตกปลา)
             -- ไม่ใช้ clearSignal (อ่านก่อนเขียน ช้าเกิน ย้ายเซิร์ฟก่อนทุกที) -> hopToNewServer เขียน "จบแล้ว" เองแบบรอให้เสร็จ
@@ -3531,6 +3682,7 @@ local function runFishingCycle()
     -- 1. ตรวจสอบบอส: ตีเองถ้าเปิด AUTO_ATTACK_BOSS ไม่งั้นส่งต่อให้ Maru Hub แล้วรอเฉย ๆ
     local bossName, bossModel = findBossInServer()
     if bossName and bossModel then
+        bossPlan.observe(bossName, bossModel) -- จด HP ไว้วัดความเร็วเลือดลด (ส่งเข้าคิว + เรียนรู้ตอนจบไฟต์)
         if CONFIG.AUTO_ATTACK_BOSS then
             print(string.format("[KL-Fisher] 🎯 พบบอส '%s'! กำลังเข้าโจมตี...", bossName))
             removeSafetyPlatform()
@@ -4195,10 +4347,23 @@ local function supervisor()
             mainFind.arrivedFrom = target.scout -- ตามของตัวหลักอีกตัวมา -> ไม่ใส่คิวเซิร์ฟนี้ทับ
             task.wait(8)
             local followedLeader = target.type == "Party"
-            local bossName = findBossInServer()
+            local bossName, bossModel = findBossInServer()
             local status
             if bossName or maruBossName then
                 status = "เจอ " .. targetLabel("Boss", bossName or maruBossName) .. " → ตีเลย"
+                -- HP จริงตอนมาถึง เทียบกับที่คาดไว้ตอนตัดสินใจไป (ใช้ปรับ BOSS_* ใน CONFIG)
+                local hpNow = bossPlan.hpOf(bossModel)
+                if hpNow then
+                    status = status .. string.format(" (HP ตอนนี้ %d%%%s)", math.floor(hpNow + 0.5),
+                        tonumber(target.expectHp) and string.format(" คาดไว้ %d%%", math.floor(math.max(tonumber(target.expectHp), 0) + 0.5)) or "")
+                end
+            elseif target.type == "Boss" then
+                -- ไปช้าไป บอสตายก่อนถึง -> log ไว้ (คาดการณ์พลาด ควรปรับ BOSS_*)
+                local hasWhirlpool = getWhirlpoolTarget() ~= nil
+                status = string.format("บอสตายก่อนไปถึง%s → %s",
+                    tonumber(target.expectHp) and string.format(" (คาดไว้ว่าเหลือ %d%%)", math.floor(math.max(tonumber(target.expectHp), 0) + 0.5)) or "",
+                    hasWhirlpool and "แต่มีน้ำวน ตกปลาเรียก Serpent ต่อ" or "ดึงเซิร์ฟถัดไปจากคิว")
+                if not hasWhirlpool then markSkipJob(game.JobId, 30 * 60) end
             elseif getWhirlpoolTarget() ~= nil then
                 status = "เจอ 🌊 น้ำวน → ตกปลาเรียก Serpent"
             elseif followedLeader then
