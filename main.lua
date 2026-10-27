@@ -4460,7 +4460,7 @@ end
 -- 15. DROP ALERT (ได้ของดรอปในรายการ -> แจ้ง Discord)
 ----------------------------------------------------------------------
 -- ยังไม่รู้ว่าเกมแจ้งของดรอปทางไหน (rbxlua ปิดอยู่ตอนเขียน ตรวจ GUI สดไม่ได้) -> ดักหลายทาง:
---   1) ข้อความบนจอที่ "เพิ่งเปลี่ยน/เพิ่งโผล่" และมองเห็นอยู่ (popup / แจ้งเตือน) ยกเว้นหน้ากระเป๋า + รายการของที่อาจดรอปบนหลอดเลือดบอส
+--   1) ข้อความบนจอที่ "เพิ่งเปลี่ยน/เพิ่งโผล่" และมองเห็นอยู่ (popup / แจ้งเตือน) ยกเว้นหน้ากระเป๋า + รายการของที่อาจดรอปบนหลอดเลือดบอส + แถบช่องอาวุธ
 --   2) แชท: ข้อความระบบ หรือข้อความที่มีชื่อไอดีนี้ + ชื่อไอเทม (ประกาศของหายากทั้งเซิร์ฟ)
 --   3) หน้ากระเป๋าเกม: ปุ่มชื่อไอเทมโผล่ใหม่ / ตัวเลขจำนวนในปุ่มเพิ่มขึ้น
 -- ไอเทมเดียวกันแจ้งซ้ำได้ทุก 60 วิ / 15 วิแรกหลังเข้าเซิร์ฟไม่แจ้ง (GUI สร้างใหม่ทั้งหมด)
@@ -4535,7 +4535,9 @@ do
         --   Inventory_Frame: หน้ากระเป๋า (ทางที่ 3 ดูแลแยก)
         --   BossesHealthBar / DropsList: หลอดเลือดบอสโชว์ "ของที่อาจดรอป" ทุกครั้งที่บอสเกิด
         --     (แจ้งเตือนผิด 27 ต.ค.: MainGui.StarterFrame.BossesHealthBar.Frames.Serpent.HPFrame.Drops.DropsList.Acrodagger)
-        local IGNORED_GUI_NAMES = { Inventory_Frame = true, BossesHealthBar = true, DropsList = true }
+        --   Backpack: แถบช่องอาวุธด้านล่างจอ โชว์ชื่ออาวุธที่มีอยู่แล้วทุกครั้งที่สลับ/หยิบ
+        --     (แจ้งเตือนผิด 28 ต.ค.: PlayerGui.Backpack.Slots.2.ToolName = Acrodagger ที่มีอยู่แล้ว)
+        local IGNORED_GUI_NAMES = { Inventory_Frame = true, BossesHealthBar = true, DropsList = true, Backpack = true }
         local function isIgnoredText(obj)
             local node = obj
             while node and node ~= playerGui do
