@@ -739,9 +739,9 @@ end
 
 local function targetLabel(targetType, targetName)
     if targetType == "Whirlpool" then
-        return string.format("🌊 น้ำวน `%s`", tostring(targetName))
+        return string.format("🌊 whirlpool `%s`", tostring(targetName))
     end
-    return string.format("🐉 บอส `%s`", bossDisplayName(targetName))
+    return string.format("🐉 boss `%s`", bossDisplayName(targetName))
 end
 
 local function postCoordLog(message)
@@ -811,7 +811,7 @@ local function broadcastTarget(targetType, targetName)
                 lastYieldedJobId = foreign.jobId
                 print(string.format("[KL-Fisher] ℹ️ เพื่อน '%s' เจอ%s '%s' ก่อนแล้ว -> ไม่ทับสัญญาณ ไปรวมที่เซิร์ฟเพื่อนแทน",
                     tostring(foreign.finder), foreign.targetType == "Boss" and "บอส" or "น้ำวน", tostring(foreign.boss)))
-                postCoordLog(string.format("🤝 **%s** เจอ %s ด้วย แต่ **%s** เจอ %s ก่อน → ไปรวมที่เซิร์ฟ **%s** (JobId `%s`)",
+                postCoordLog(string.format("🤝 **%s** also found %s, but **%s** found %s first → joining **%s**'s server (JobId `%s`)",
                     LocalPlayer.Name, targetLabel(targetType, targetName), tostring(foreign.finder),
                     targetLabel(foreign.targetType, foreign.boss), tostring(foreign.finder), shortJobId(foreign.jobId)))
             end
@@ -853,7 +853,7 @@ local function broadcastTarget(targetType, targetName)
         local findKey = tostring(game.JobId) .. ":" .. targetType
         if putOk and not coordLoggedFinds[findKey] then
             coordLoggedFinds[findKey] = true
-            postCoordLog(string.format("📢 **%s** เจอ %s → เรียกเพื่อนมารวม (PlaceId `%s` / JobId `%s`)",
+            postCoordLog(string.format("📢 **%s** found %s → calling friends over (PlaceId `%s` / JobId `%s`)",
                 LocalPlayer.Name, targetLabel(targetType, targetName), tostring(game.PlaceId), tostring(game.JobId)))
         end
         local typeLabel = (targetType == "Whirlpool") and "🌊 น้ำวน" or "🐉 บอส"
@@ -914,16 +914,16 @@ local function postDiscordTarget(url, key, emoji, kindLabel, targetName, color)
     local joinCommand = string.format('game:GetService("TeleportService"):TeleportToPlaceInstance(%d, "%s")', game.PlaceId, tostring(game.JobId))
     local payload = {
         username = "KL-Fisher",
-        content = string.format("%s พบ%s **%s** !", emoji, kindLabel, tostring(targetName)),
+        content = string.format("%s %s found: **%s**!", emoji, kindLabel, tostring(targetName)),
         embeds = { {
             title = emoji .. " " .. tostring(targetName),
             color = color,
             fields = {
                 { name = kindLabel, value = tostring(targetName), inline = true },
-                { name = "ผู้พบ", value = LocalPlayer.Name, inline = true },
+                { name = "Found by", value = LocalPlayer.Name, inline = true },
                 { name = "PlaceId", value = tostring(game.PlaceId), inline = true },
                 { name = "JobId", value = "```" .. tostring(game.JobId) .. "```" },
-                { name = "คำสั่งวาร์ป (วางใน executor)", value = "```lua\n" .. joinCommand .. "\n```" },
+                { name = "Join command (paste into executor)", value = "```lua\n" .. joinCommand .. "\n```" },
             },
             timestamp = DateTime.now():ToIsoDate(),
         } },
@@ -951,14 +951,14 @@ end
 local function notifyDiscordBoss(bossName)
     if not CONFIG.DISCORD_NOTIFY_BOSS then return end
     postDiscordTarget(CONFIG.DISCORD_WEBHOOK_URL, tostring(game.JobId) .. ":Boss:" .. tostring(bossName),
-        "🐉", "บอส", bossDisplayName(bossName), 15158332)
+        "🐉", "Boss", bossDisplayName(bossName), 15158332)
 end
 
 local function notifyDiscordWhirlpool(whirlpoolName)
     if not CONFIG.DISCORD_NOTIFY_WHIRLPOOL then return end
     -- ชื่อที่ส่งมามีวงเล็บบอกตำแหน่ง เช่น "SerpentWhirlpool (ใน Effects)" -> นับเป็นน้ำวนเดียวกันต่อเซิร์ฟ
     postDiscordTarget(CONFIG.DISCORD_WHIRLPOOL_WEBHOOK_URL, tostring(game.JobId) .. ":Whirlpool",
-        "🌊", "น้ำวน", whirlpoolName, 3447003)
+        "🌊", "Whirlpool", whirlpoolName, 3447003)
 end
 
 local function broadcastBossFound(bossName)
@@ -1025,7 +1025,7 @@ local function followFriend(signal)
     if (followAttempts[jobKey] or 0) >= MAX_FOLLOW_ATTEMPTS then
         followAttempts[jobKey] = MAX_FOLLOW_ATTEMPTS
         warn(string.format("[KL-Fisher] ⚠️ วาร์ปไป JobId %s ไม่สำเร็จครบ %d ครั้ง -> ข้ามสัญญาณนี้", jobKey, MAX_FOLLOW_ATTEMPTS))
-        postCoordLog(string.format("⛔ **%s** วาร์ปไปหา **%s** ไม่สำเร็จครบ %d ครั้ง → เลิกตามสัญญาณนี้ (JobId `%s`)",
+        postCoordLog(string.format("⛔ **%s** failed to teleport to **%s** %d times → giving up on this signal (JobId `%s`)",
             LocalPlayer.Name, tostring(signal.finder), MAX_FOLLOW_ATTEMPTS, shortJobId(jobKey)))
         -- จดเซิร์ฟนี้ลงไฟล์ 10 นาที: ย้ายเซิร์ฟแล้วตัวนับในหน่วยความจำรีเซ็ต ถ้าไม่จดจะวนกลับมาลองใหม่ไม่จบ
         -- (และถือว่าไม่มีสัญญาณนี้ -> เจอน้ำวน/บอสเองก็เรียกเพื่อนได้ ไม่โดนสัญญาณที่ตามไม่ได้ขวางไว้)
@@ -1078,7 +1078,7 @@ local function followFriend(signal)
     if installHopBlockHooksWhenSafe then installHopBlockHooksWhenSafe() end
     lastTeleportFailReason = nil
 
-    postCoordLog(string.format("🏃 **%s** กำลังวาร์ปไปหา **%s** (%s) ครั้งที่ %d/%d → JobId `%s`",
+    postCoordLog(string.format("🏃 **%s** teleporting to **%s** (%s), attempt %d/%d → JobId `%s`",
         LocalPlayer.Name, tostring(signal.finder), targetLabel(signal.targetType, signal.boss),
         followAttempts[jobKey], MAX_FOLLOW_ATTEMPTS, shortJobId(signal.jobId)))
 
@@ -1109,8 +1109,8 @@ local function followFriend(signal)
 
     if failKind and DEAD_TARGET_RESULTS[failKind] then
         -- เซิร์ฟเพื่อนเต็ม/ปิดแล้ว -> ลองอีกก็ไม่ได้ ไม่ต้องรอครบ 3 ครั้ง: ข้ามเซิร์ฟนี้ 10 นาที แล้วย้ายเซิร์ฟใหม่เลย
-        postCoordLog(string.format("🚫 **%s** วาร์ปไปหา **%s** ไม่ได้: เซิร์ฟ%s (%s) → ข้ามเซิร์ฟนี้ 10 นาที แล้วย้ายเซิร์ฟใหม่",
-            LocalPlayer.Name, tostring(signal.finder), failKind == "GameFull" and "เต็ม" or "ปิด/เข้าไม่ได้", failKind))
+        postCoordLog(string.format("🚫 **%s** can't teleport to **%s**: server %s (%s) → skipping this server for 10 min and hopping",
+            LocalPlayer.Name, tostring(signal.finder), failKind == "GameFull" and "full" or "closed/unreachable", failKind))
         markSkipJob(jobKey, 10 * 60)
         finishFollow()
         if hopToNewServerRef then
@@ -1120,9 +1120,9 @@ local function followFriend(signal)
     end
 
     -- ยังอยู่เซิร์ฟเดิม (เน็ตสะดุด ฯลฯ) -> ปล่อยให้ย้ายเซิร์ฟได้ตามปกติ แล้วลองใหม่รอบหน้า (สูงสุด 3 ครั้ง)
-    postCoordLog(string.format("⚠️ **%s** วาร์ปไปหา **%s** ไม่สำเร็จ (ครั้งที่ %d/%d)%s",
+    postCoordLog(string.format("⚠️ **%s** teleport to **%s** failed (attempt %d/%d)%s",
         LocalPlayer.Name, tostring(signal.finder), followAttempts[jobKey], MAX_FOLLOW_ATTEMPTS,
-        lastTeleportFailReason and (": " .. lastTeleportFailReason) or " (ยังอยู่เซิร์ฟเดิมหลัง 12 วิ)"))
+        lastTeleportFailReason and (": " .. lastTeleportFailReason) or " (still in the same server after 12 s)"))
     finishFollow()
     return true
 end
@@ -2764,7 +2764,7 @@ local function hopToNewServer(reason, options)
     bypassHopBlock = true -- การย้ายของเราเอง ต้องไม่โดนตัวกันย้ายเซิร์ฟ (HOLD) บล็อค
     print(string.format("[KL-Fisher] 🔁 %s -> ย้ายไปเซิร์ฟใหม่", reason))
     if not options.quiet then
-        postCoordLog(string.format("🔁 **%s** %s → ย้ายไปเซิร์ฟใหม่ (JobId เดิม `%s`)", LocalPlayer.Name, reason, shortJobId(game.JobId)))
+        postCoordLog(string.format("🔁 **%s** %s → hopping to a new server (old JobId `%s`)", LocalPlayer.Name, reason, shortJobId(game.JobId)))
     end
 
     if options and options.endSignal then
@@ -2774,7 +2774,7 @@ local function hopToNewServer(reason, options)
 
     local function abortForNewBoss()
         warn("[KL-Fisher] ↩️ ยกเลิกย้ายเซิร์ฟ: มีบอสตัวใหม่ในเซิร์ฟนี้")
-        postCoordLog(string.format("↩️ **%s** ยกเลิกย้ายเซิร์ฟ เพราะมีบอสตัวใหม่โผล่ในเซิร์ฟนี้", LocalPlayer.Name))
+        postCoordLog(string.format("↩️ **%s** cancelled the server hop: a new boss spawned here", LocalPlayer.Name))
         bypassHopBlock = false
         isHoppingServer = false
     end
@@ -2816,7 +2816,7 @@ local function hopToNewServer(reason, options)
         end
     end
     if not options.quiet then
-        postCoordLog(string.format("⚠️ **%s** ย้ายเซิร์ฟไม่สำเร็จครบ %d ครั้ง → อยู่เซิร์ฟเดิมต่อ", LocalPlayer.Name, maxAttempts))
+        postCoordLog(string.format("⚠️ **%s** server hop failed %d times → staying in this server", LocalPlayer.Name, maxAttempts))
     end
     bypassHopBlock = false
     isHoppingServer = false
@@ -2901,9 +2901,9 @@ end
 -- ความเร็วเลือดลดที่ใช้คาดการณ์ + ที่มา
 function bossPlan.drain(entry)
     local measured = entry and tonumber(entry.hpRate)
-    if measured and measured > 0 then return measured, "วัดสด" end
-    if bossPlan.learned then return bossPlan.learned, string.format("เรียนรู้ %d ไฟต์", bossPlan.fights) end
-    return tonumber(CONFIG.BOSS_ASSUMED_DRAIN) or 0.4, "ค่าเดา"
+    if measured and measured > 0 then return measured, "measured live" end
+    if bossPlan.learned then return bossPlan.learned, string.format("learned from %d fights", bossPlan.fights) end
+    return tonumber(CONFIG.BOSS_ASSUMED_DRAIN) or 0.4, "default guess"
 end
 
 -- คาดว่าไปถึงแล้วบอสเหลือกี่ % (ไม่ใช่บอส / ไม่รู้ HP -> nil)
@@ -2918,16 +2918,16 @@ end
 function bossPlan.worth(entry, fromWhirlpool)
     local players, maxPlayers = tonumber(entry.players), tonumber(entry.maxPlayers)
     if CONFIG.BOSS_SKIP_FULL_SERVER and players and maxPlayers and maxPlayers > 0 and players >= maxPlayers then
-        return false, string.format("เซิร์ฟเต็ม %d/%d", players, maxPlayers)
+        return false, string.format("server full %d/%d", players, maxPlayers)
     end
     if entry.type ~= "Boss" then return true, nil end
     local arrive = bossPlan.arriveHp(entry)
-    if not arrive then return true, "ไม่รู้ HP ลองไป" end
+    if not arrive then return true, "HP unknown, trying anyway" end
     local _, source = bossPlan.drain(entry)
     local need = fromWhirlpool and (tonumber(CONFIG.BOSS_MIN_ARRIVE_HP_FROM_WHIRLPOOL) or 25)
         or (tonumber(CONFIG.BOSS_MIN_ARRIVE_HP) or 5)
-    local detail = string.format("คาดว่าไปถึงเหลือ ~%d%% (%s, ต้อง ≥%d%%%s)", math.floor(math.max(arrive, 0) + 0.5),
-        source, need, fromWhirlpool and " เพราะต้องทิ้งน้ำวน" or "")
+    local detail = string.format("expected ~%d%% HP on arrival (%s, need ≥%d%%%s)", math.floor(math.max(arrive, 0) + 0.5),
+        source, need, fromWhirlpool and " because it means leaving a whirlpool" or "")
     return arrive >= need, detail
 end
 
@@ -3149,7 +3149,7 @@ local function runQueueStep(leaveIfEmpty, reason)
                 if not bossPlan.skipLogged[skipKey] then
                     bossPlan.skipLogged[skipKey] = true
                     print(string.format("[KL-Fisher] ⏭️ ข้าม %s ที่ '%s' เจอ: %s", queueEntryLabel(entry), tostring(entry.scout), why))
-                    postCoordLog(string.format("⏭️ **%s** ข้าม %s ที่ **%s** เจอ — %s (JobId `%s`)",
+                    postCoordLog(string.format("⏭️ **%s** skipped %s found by **%s** — %s (JobId `%s`)",
                         LocalPlayer.Name, queueEntryLabel(entry), tostring(entry.scout), why, shortJobId(entry.jobId)))
                 end
             end
@@ -3167,7 +3167,7 @@ local function runQueueStep(leaveIfEmpty, reason)
                 print(string.format("[KL-Fisher] 🎯 ดึงเซิร์ฟจากคิว: %s (%s '%s' เจอ ต่ออายุล่าสุด %d วิก่อน%s) -> วาร์ปไป JobId %s",
                     queueEntryLabel(entry), entry.byMain and "ตัวหลัก" or "ตัวรอง", tostring(entry.scout),
                     math.floor(entry.age), why and (" / " .. why) or "", entry.jobId))
-                postCoordLog(string.format("🎯 **%s** ดึงเซิร์ฟจากคิว: %s ที่ **%s** เจอเมื่อ %d วิก่อน%s → วาร์ปไป (JobId `%s`)",
+                postCoordLog(string.format("🎯 **%s** took from queue: %s found by **%s** %d s ago%s → teleporting (JobId `%s`)",
                     LocalPlayer.Name, queueEntryLabel(entry), tostring(entry.scout), math.floor(entry.age),
                     why and (" — " .. why) or "", shortJobId(entry.jobId)))
 
@@ -3191,19 +3191,19 @@ local function runQueueStep(leaveIfEmpty, reason)
                 if failKind == nil then
                     -- ไม่มีแจ้งล้มเหลว แต่ยังไม่ย้ายหลัง 45 วิ -> อาจยังวาร์ปอยู่ ห้ามสั่งวาร์ปเซิร์ฟอื่นทับ
                     warn("[KL-Fisher] ⏳ ยังไม่ย้ายหลังรอ 45 วิ -> หยุดดึงคิวรอบนี้ รอบหน้าค่อยดึงใหม่")
-                    postCoordLog(string.format("⏳ **%s** สั่งวาร์ปไปเซิร์ฟในคิวแล้ว แต่ยังไม่ย้ายหลัง 45 วิ (JobId `%s`)",
+                    postCoordLog(string.format("⏳ **%s** started teleporting to a queued server but hasn't moved after 45 s (JobId `%s`)",
                         LocalPlayer.Name, shortJobId(entry.jobId)))
                     return
                 end
                 markSkipJob(entry.jobId, 10 * 60)
-                postCoordLog(string.format("🚫 **%s** วาร์ปไปเซิร์ฟในคิวไม่ได้ (%s) → ลองอันถัดไป",
-                    LocalPlayer.Name, failKind == "GameFull" and "เซิร์ฟเต็ม" or tostring(lastTeleportFailReason or failKind)))
+                postCoordLog(string.format("🚫 **%s** can't teleport to the queued server (%s) → trying the next one",
+                    LocalPlayer.Name, failKind == "GameFull" and "server full" or tostring(lastTeleportFailReason or failKind)))
                 if failKind == "Flooded" then task.wait(20) end
             end
         end
 
         if leaveIfEmpty and not mainBusyHere() then
-            hopToNewServer((reason or "ตีจบแล้ว") .. " (คิวว่าง)")
+            hopToNewServer((reason or "fight over") .. " (queue empty)")
         end
     end)
     queueStepRunning = false
@@ -3219,7 +3219,7 @@ function party.follow(target)
     local ok, err = pcall(function()
         print(string.format("[KL-Fisher] 👥 ตามหัวหน้า '%s' ไปเซิร์ฟเดียวกัน (%s) -> JobId %s",
             tostring(target.by), tostring(target.label), target.jobId))
-        postCoordLog(string.format("👥 **%s** ตาม **%s** ไปเซิร์ฟเดียวกัน (%s) → JobId `%s`",
+        postCoordLog(string.format("👥 **%s** following **%s** to the same server (%s) → JobId `%s`",
             LocalPlayer.Name, tostring(target.by), tostring(target.label), shortJobId(target.jobId)))
 
         isHoppingServer = true
@@ -3239,8 +3239,8 @@ function party.follow(target)
         if failKind and failKind ~= "IsTeleporting" then
             -- เซิร์ฟหัวหน้าเต็ม / เข้าไม่ได้ -> ไม่ลองเซิร์ฟนี้อีก 10 นาที รอหัวหน้าไปเซิร์ฟถัดไป (หรือดึงคิวเองถ้าหัวหน้าเงียบ)
             markSkipJob(target.jobId, 10 * 60)
-            postCoordLog(string.format("🚫 **%s** ตาม **%s** ไปไม่ได้ (%s)", LocalPlayer.Name, tostring(target.by),
-                failKind == "GameFull" and "เซิร์ฟเต็ม" or tostring(lastTeleportFailReason or failKind)))
+            postCoordLog(string.format("🚫 **%s** can't follow **%s** (%s)", LocalPlayer.Name, tostring(target.by),
+                failKind == "GameFull" and "server full" or tostring(lastTeleportFailReason or failKind)))
         end
     end)
     queueStepRunning = false
@@ -3370,7 +3370,7 @@ local function runScout()
                 print(string.format("[KL-Fisher] 📥 %s: %s (JobId %s)", isNewInfo and "ใส่คิวแล้ว" or "ต่ออายุในคิว",
                     queueEntryLabel(found), game.JobId))
                 if isNewInfo then
-                    postCoordLog(string.format("📥 **%s** ใส่คิว: %s — ผู้เล่น %d/%d (JobId `%s`)",
+                    postCoordLog(string.format("📥 **%s** queued: %s — players %d/%d (JobId `%s`)",
                         LocalPlayer.Name, queueEntryLabel(found), found.players, found.maxPlayers, shortJobId(game.JobId)))
                 end
             else
@@ -3394,7 +3394,7 @@ local function runScout()
     local stay = minStay - (os.clock() - arrivedAt)
     if stay > 0 then task.wait(stay) end
     while true do
-        hopToNewServer(found and "ใส่คิวแล้ว" or "ไม่มีบอส/น้ำวน", { ignoreBoss = true, quiet = true })
+        hopToNewServer(found and "queued" or "no boss/whirlpool", { ignoreBoss = true, quiet = true })
         task.wait(10) -- ย้ายไม่สำเร็จครบทุกครั้ง -> พักแล้วลองใหม่ (ตัวรองไม่มีงานอื่นในเซิร์ฟนี้)
     end
 end
@@ -3453,7 +3453,7 @@ function mainFind.send(targetType, targetName)
             mainFind.logged[targetType] = true
             print(string.format("[KL-Fisher] 📥 ตัวหลักเจอ %s ในเซิร์ฟตัวเอง -> ใส่คิว ให้ตัวหลักอีกตัวมาทำด้วยกัน (JobId %s)",
                 queueEntryLabel(entry), game.JobId))
-            postCoordLog(string.format("📥 **%s** (ตัวหลัก) เจอ %s ในเซิร์ฟตัวเอง → ใส่คิว ให้ตัวหลักอีกตัวมาด้วย (JobId `%s`)",
+            postCoordLog(string.format("📥 **%s** (main) found %s in its own server → queued it so the other main comes too (JobId `%s`)",
                 LocalPlayer.Name, queueEntryLabel(entry), shortJobId(game.JobId)))
         end
     end)
@@ -3641,7 +3641,7 @@ local function runFishingCycle()
     if bossGone then
         bossMissingSince = nil
         print(string.format("[KL-Fisher] 🏆 บอส '%s' หายไปแล้ว (Maru ตีจบ) -> ล้างสัญญาณ คืนเบ็ดให้ Maru", bossDisplayName(maruBossName)))
-        postCoordLog(string.format("🏆 บอส `%s` ในเซิร์ฟที่ **%s** อยู่หายไปแล้ว (ตีจบ) → จบการเรียกเพื่อนรอบนี้ (JobId `%s`)",
+        postCoordLog(string.format("🏆 boss `%s` in **%s**'s server is gone (killed) → this round is over (JobId `%s`)",
             bossDisplayName(maruBossName), LocalPlayer.Name, shortJobId(game.JobId)))
         local finishedBoss = maruBossName
         maruBossName = nil
@@ -3658,7 +3658,7 @@ local function runFishingCycle()
             currentFightingBossName = nil
             activeBroadcastKey = nil
             task.wait(tonumber(CONFIG.HOP_AFTER_BOSS_DELAY) or 2)
-            local reason = string.format("บอส %s ตีจบแล้ว", bossDisplayName(finishedBoss))
+            local reason = string.format("boss %s killed", bossDisplayName(finishedBoss))
             if CONFIG.QUEUE_MODE then
                 -- โหมดคิว: ไปเซิร์ฟถัดไปที่ตัวรองหาไว้ (คิวว่าง -> สุ่มย้ายเซิร์ฟ) / ไม่ใช้ช่อง signal แล้ว
                 markSkipJob(game.JobId, 30 * 60)
@@ -4268,14 +4268,14 @@ local function supervisor()
 
         -- มาถึงช้า: คนเจอตีจบแล้ว/เขียน "จบแล้ว" ไปแล้ว -> ไม่ต้องยืนรอ ย้ายเลย
         if data.status ~= "active" then
-            postCoordLog(string.format("⌛ **%s** มาถึงเซิร์ฟของ **%s** ช้าไป (จบไปแล้ว) → ย้ายเซิร์ฟใหม่", LocalPlayer.Name, tostring(data.finder)))
+            postCoordLog(string.format("⌛ **%s** reached **%s**'s server too late (already over) → hopping", LocalPlayer.Name, tostring(data.finder)))
             markSkipJob(game.JobId, 30 * 60)
-            hopToNewServer(string.format("มาถึงเซิร์ฟของ %s ช้าไป", tostring(data.finder)))
+            hopToNewServer(string.format("reached %s's server too late", tostring(data.finder)))
             return
         end
 
         print(string.format("[KL-Fisher] ✅ มาถึงเซิร์ฟของ '%s' แล้ว", tostring(data.finder)))
-        postCoordLog(string.format("✅ **%s** มาถึงเซิร์ฟของ **%s** แล้ว (%s) — ในเซิร์ฟมี %d คน",
+        postCoordLog(string.format("✅ **%s** arrived at **%s**'s server (%s) — %d players in server",
             LocalPlayer.Name, tostring(data.finder), targetLabel(data.targetType, data.boss), #Players:GetPlayers()))
 
         -- มาถึงแล้วแต่ไม่มีอะไรให้ทำ (บอสตายแล้ว / น้ำวนหาย / คนเจอหลุด) -> สัญญาณชี้มาเซิร์ฟเรา เลยถูกนับเป็นของเรา
@@ -4284,9 +4284,9 @@ local function supervisor()
         local nothingHere = not maruBossName and os.clock() >= bossIncomingUntil and not findBossInServer()
             and getWhirlpoolTarget() == nil and not isHoppingServer and not isTeleportingToFriend
         if nothingHere then
-            postCoordLog(string.format("🫥 **%s** อยู่เซิร์ฟของ **%s** แล้ว 45 วิ ไม่มีบอสหรือน้ำวน → ย้ายเซิร์ฟใหม่", LocalPlayer.Name, tostring(data.finder)))
+            postCoordLog(string.format("🫥 **%s** has been in **%s**'s server for 45 s with no boss or whirlpool → hopping", LocalPlayer.Name, tostring(data.finder)))
             markSkipJob(game.JobId, 30 * 60)
-            hopToNewServer("มาถึงแล้วไม่มีบอสหรือน้ำวน")
+            hopToNewServer("arrived but no boss or whirlpool")
         end
     end)
 
@@ -4350,35 +4350,35 @@ local function supervisor()
             local bossName, bossModel = findBossInServer()
             local status
             if bossName or maruBossName then
-                status = "เจอ " .. targetLabel("Boss", bossName or maruBossName) .. " → ตีเลย"
+                status = "found " .. targetLabel("Boss", bossName or maruBossName) .. " → fighting"
                 -- HP จริงตอนมาถึง เทียบกับที่คาดไว้ตอนตัดสินใจไป (ใช้ปรับ BOSS_* ใน CONFIG)
                 local hpNow = bossPlan.hpOf(bossModel)
                 if hpNow then
-                    status = status .. string.format(" (HP ตอนนี้ %d%%%s)", math.floor(hpNow + 0.5),
-                        tonumber(target.expectHp) and string.format(" คาดไว้ %d%%", math.floor(math.max(tonumber(target.expectHp), 0) + 0.5)) or "")
+                    status = status .. string.format(" (HP now %d%%%s)", math.floor(hpNow + 0.5),
+                        tonumber(target.expectHp) and string.format(", expected %d%%", math.floor(math.max(tonumber(target.expectHp), 0) + 0.5)) or "")
                 end
             elseif target.type == "Boss" then
                 -- ไปช้าไป บอสตายก่อนถึง -> log ไว้ (คาดการณ์พลาด ควรปรับ BOSS_*)
                 local hasWhirlpool = getWhirlpoolTarget() ~= nil
-                status = string.format("บอสตายก่อนไปถึง%s → %s",
-                    tonumber(target.expectHp) and string.format(" (คาดไว้ว่าเหลือ %d%%)", math.floor(math.max(tonumber(target.expectHp), 0) + 0.5)) or "",
-                    hasWhirlpool and "แต่มีน้ำวน ตกปลาเรียก Serpent ต่อ" or "ดึงเซิร์ฟถัดไปจากคิว")
+                status = string.format("boss died before arrival%s → %s",
+                    tonumber(target.expectHp) and string.format(" (expected %d%% left)", math.floor(math.max(tonumber(target.expectHp), 0) + 0.5)) or "",
+                    hasWhirlpool and "but there is a whirlpool, fishing for Serpent" or "taking the next server from the queue")
                 if not hasWhirlpool then markSkipJob(game.JobId, 30 * 60) end
             elseif getWhirlpoolTarget() ~= nil then
-                status = "เจอ 🌊 น้ำวน → ตกปลาเรียก Serpent"
+                status = "found 🌊 whirlpool → fishing for Serpent"
             elseif followedLeader then
-                status = "ยังไม่มีบอส/น้ำวน → อยู่กับหัวหน้า รอเซิร์ฟถัดไป"
+                status = "no boss/whirlpool yet → staying with the leader, waiting for the next server"
             else
-                status = "ไม่มีอะไรแล้ว (ถูกตีจบ / น้ำวนหาย) → ดึงเซิร์ฟถัดไปจากคิว"
+                status = "nothing left (killed / whirlpool gone) → taking the next server from the queue"
                 markSkipJob(game.JobId, 30 * 60)
             end
             if followedLeader then
                 print(string.format("[KL-Fisher] 👥 มาถึงเซิร์ฟเดียวกับหัวหน้าแล้ว: %s", status))
-                postCoordLog(string.format("👥 **%s** มาถึงเซิร์ฟเดียวกับ **%s** แล้ว — %s",
+                postCoordLog(string.format("👥 **%s** reached the same server as **%s** — %s",
                     LocalPlayer.Name, tostring(target.scout), status))
             else
                 print(string.format("[KL-Fisher] ✅ มาถึงเซิร์ฟจากคิวแล้ว: %s", status))
-                postCoordLog(string.format("✅ **%s** มาถึงเซิร์ฟจากคิว (ที่ **%s** เจอ) — %s",
+                postCoordLog(string.format("✅ **%s** arrived at the queued server (found by **%s**) — %s",
                     LocalPlayer.Name, tostring(target.scout), status))
             end
         end)
@@ -4396,7 +4396,7 @@ local function supervisor()
                 task.wait(3)
                 while true do
                     if not isHoppingServer then
-                        party.publish(game.JobId, maruBossName and bossDisplayName(maruBossName) or "เซิร์ฟที่หัวหน้าอยู่")
+                        party.publish(game.JobId, maruBossName and bossDisplayName(maruBossName) or "leader's server")
                     end
                     task.wait(tonumber(CONFIG.PARTY_HEARTBEAT) or 120)
                 end
@@ -4488,15 +4488,15 @@ do
             print(string.format("[KL-Fisher] 🎁 ได้ '%s' (%s): %s", item, source, cleanDetail))
             local payload = {
                 username = "KL-Drop",
-                content = string.format("🎁 **%s** ได้ **%s** !", LocalPlayer.Name, item),
+                content = string.format("🎁 **%s** got **%s**!", LocalPlayer.Name, item),
                 embeds = { {
                     title = "🎁 " .. item,
                     color = 15844367,
                     fields = {
-                        { name = "ไอดี", value = LocalPlayer.Name, inline = true },
-                        { name = "บอสล่าสุด", value = bossDisplayName(maruBossName or "-"), inline = true },
-                        { name = "จับได้จาก", value = source, inline = true },
-                        { name = "ข้อความในเกม", value = cleanDetail ~= "" and cleanDetail or "-" },
+                        { name = "Account", value = LocalPlayer.Name, inline = true },
+                        { name = "Last boss", value = bossDisplayName(maruBossName or "-"), inline = true },
+                        { name = "Detected via", value = source, inline = true },
+                        { name = "In-game text", value = cleanDetail ~= "" and cleanDetail or "-" },
                         { name = "JobId", value = "```" .. tostring(game.JobId) .. "```" },
                     },
                     timestamp = DateTime.now():ToIsoDate(),
@@ -4547,7 +4547,7 @@ do
         local function checkLabel(obj)
             local item = matchDropItem(obj.Text)
             if item and not isIgnoredText(obj) and isShownOnScreen(obj) then
-                sendDropAlert(item, "ข้อความบนจอ (" .. obj:GetFullName() .. ")", obj.Text)
+                sendDropAlert(item, "on-screen text (" .. obj:GetFullName() .. ")", obj.Text)
             end
         end
         local function watchLabel(obj)
@@ -4584,12 +4584,12 @@ do
             if not item or not button:IsA("GuiObject") then return end
             local lastCount = itemCount(button)
             if os.clock() - watchStartedAt >= 15 then
-                sendDropAlert(item, "กระเป๋า: ได้ชิ้นแรก", button:GetFullName())
+                sendDropAlert(item, "inventory: first one", button:GetFullName())
             end
             button.DescendantAdded:Connect(function() task.defer(function()
                 local count = itemCount(button)
                 if count and lastCount and count > lastCount then
-                    sendDropAlert(item, "กระเป๋า: จำนวนเพิ่ม", string.format("%d → %d", lastCount, count))
+                    sendDropAlert(item, "inventory: count went up", string.format("%d → %d", lastCount, count))
                 end
                 lastCount = count or lastCount
             end) end)
@@ -4598,7 +4598,7 @@ do
                     obj:GetPropertyChangedSignal("Text"):Connect(function()
                         local count = itemCount(button)
                         if count and lastCount and count > lastCount then
-                            sendDropAlert(item, "กระเป๋า: จำนวนเพิ่ม", string.format("%d → %d", lastCount, count))
+                            sendDropAlert(item, "inventory: count went up", string.format("%d → %d", lastCount, count))
                         end
                         lastCount = count or lastCount
                     end)
@@ -4624,7 +4624,7 @@ do
             local mentionsMe = string.find(lower, string.lower(LocalPlayer.Name), 1, true)
                 or string.find(lower, string.lower(LocalPlayer.DisplayName), 1, true)
             if mentionsMe or isSystem then
-                sendDropAlert(item, isSystem and "แชทระบบ" or "แชท", text)
+                sendDropAlert(item, isSystem and "system chat" or "chat", text)
             end
         end
         pcall(function()
