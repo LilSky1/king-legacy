@@ -4460,7 +4460,7 @@ end
 -- 15. DROP ALERT (ได้ของดรอปในรายการ -> แจ้ง Discord)
 ----------------------------------------------------------------------
 -- ยังไม่รู้ว่าเกมแจ้งของดรอปทางไหน (rbxlua ปิดอยู่ตอนเขียน ตรวจ GUI สดไม่ได้) -> ดักหลายทาง:
---   1) ข้อความบนจอที่ "เพิ่งเปลี่ยน/เพิ่งโผล่" และมองเห็นอยู่ (popup / แจ้งเตือน) ยกเว้นหน้ากระเป๋า (มีชื่อไอเทมอยู่แล้ว)
+--   1) ข้อความบนจอที่ "เพิ่งเปลี่ยน/เพิ่งโผล่" และมองเห็นอยู่ (popup / แจ้งเตือน) ยกเว้นหน้ากระเป๋า + รายการของที่อาจดรอปบนหลอดเลือดบอส
 --   2) แชท: ข้อความระบบ หรือข้อความที่มีชื่อไอดีนี้ + ชื่อไอเทม (ประกาศของหายากทั้งเซิร์ฟ)
 --   3) หน้ากระเป๋าเกม: ปุ่มชื่อไอเทมโผล่ใหม่ / ตัวเลขจำนวนในปุ่มเพิ่มขึ้น
 -- ไอเทมเดียวกันแจ้งซ้ำได้ทุก 60 วิ / 15 วิแรกหลังเข้าเซิร์ฟไม่แจ้ง (GUI สร้างใหม่ทั้งหมด)
@@ -4531,15 +4531,22 @@ do
             end
             return node == playerGui
         end
-        local function isInventoryText(obj)
-            local mainGui = playerGui:FindFirstChild("MainGui")
-            local starter = mainGui and mainGui:FindFirstChild("StarterFrame")
-            local inventory = starter and starter:FindFirstChild("Inventory_Frame")
-            return inventory ~= nil and obj:IsDescendantOf(inventory)
+        -- ข้อความที่มีชื่อไอเทมอยู่แล้วโดยไม่ได้แปลว่าเพิ่งได้ของ -> ไม่นับ
+        --   Inventory_Frame: หน้ากระเป๋า (ทางที่ 3 ดูแลแยก)
+        --   BossesHealthBar / DropsList: หลอดเลือดบอสโชว์ "ของที่อาจดรอป" ทุกครั้งที่บอสเกิด
+        --     (แจ้งเตือนผิด 27 ต.ค.: MainGui.StarterFrame.BossesHealthBar.Frames.Serpent.HPFrame.Drops.DropsList.Acrodagger)
+        local IGNORED_GUI_NAMES = { Inventory_Frame = true, BossesHealthBar = true, DropsList = true }
+        local function isIgnoredText(obj)
+            local node = obj
+            while node and node ~= playerGui do
+                if IGNORED_GUI_NAMES[node.Name] then return true end
+                node = node.Parent
+            end
+            return false
         end
         local function checkLabel(obj)
             local item = matchDropItem(obj.Text)
-            if item and not isInventoryText(obj) and isShownOnScreen(obj) then
+            if item and not isIgnoredText(obj) and isShownOnScreen(obj) then
                 sendDropAlert(item, "ข้อความบนจอ (" .. obj:GetFullName() .. ")", obj.Text)
             end
         end
